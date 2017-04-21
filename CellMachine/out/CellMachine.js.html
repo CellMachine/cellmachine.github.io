@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: CellMachine.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: CellMachine.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * @version 1.6.1
+ * @author Egor Vasilenko
+ * @copyright 2016
+ */
+
+/**
+ * The world where cells live.
+ * @class
+ * @param {Object} param - object
+ */
+function Machine(param) {
+	var canvas = document.createElement('canvas')
+    var div = document.getElementById(param.container)
+    canvas.width = param.size * param.width
+    canvas.height = param.size * param.height
+    div.appendChild(canvas)
+    var grid = []
+    for (var i = 0; i &lt; param.width * param.height; i++) {
+    	grid[i] = { jump: jump }
+    	grid[i].id = i
+    	grid[i].y = Math.floor(i / param.width)
+    	grid[i].x = i % param.width
+    }
+    var ctx = canvas.getContext('2d')
+	var devicePixelRatio = window.devicePixelRatio || 1,
+	backingStoreRatio = ctx.webkitBackingStorePixelRatio ||
+	                    ctx.mozBackingStorePixelRatio ||
+	                    ctx.msBackingStorePixelRatio ||
+	                    ctx.oBackingStorePixelRatio ||
+	                    ctx.backingStorePixelRatio || 1,
+	ratio = devicePixelRatio / backingStoreRatio
+
+	var oldWidth = canvas.width
+	var oldHeight = canvas.height
+	canvas.width = oldWidth * ratio
+	canvas.height = oldHeight * ratio
+	canvas.style.width = oldWidth + 'px'
+	canvas.style.height = oldHeight + 'px'
+	ctx.scale(ratio, ratio)
+
+	/**
+	 * The initialization of Machine with cells.
+	 * @param {Array} a array with cells
+	 */
+	this.init = function(a) {
+		var gridIds = []
+		for (var i = 0; i &lt; grid.length; i++)
+			gridIds[i] = i
+		for (var i = 0; i &lt; a.length; i++) {
+			var min = grid.length * a[i][1]
+			if (grid.length * a[i][1] > gridIds.length)
+				min = gridIds.length
+			for (var j = 0; j &lt; min; j++) {
+				var id = Math.floor(Math.random() * gridIds.length)
+				grid[gridIds[id]].jump(a[i][0])
+				for (var key in a[i][2])
+					grid[gridIds[id]][key] = a[i][2][key]
+				grid[gridIds[id]].from = []
+				gridIds.splice(id, 1)
+			}
+		}
+		this.visualize()
+	}
+
+	/**
+   * Add specific combination of cells
+	 */
+	this.map = function(x, y, a, legend) {
+		var m = this
+		for (var i = 0; i &lt; a.length; i++)
+			for (var j = 0; j &lt; a[i].length; j++)
+				if (m.grid[(i + y) * m.width + j + x])
+					for (var key in legend[a[i][j]])
+						if (key == 'type')
+							m.grid[(i + y) * m.width + j + x].jump(legend[a[i][j]][key])
+						else
+							m.grid[(i + y) * m.width + j + x][key] = cloneObject(legend[a[i][j]][key])
+		m.visualize()
+	}
+
+	this.save = function(name) {
+		var m = this
+		var s = name + ' = [['
+		var x = 1
+		for (var i = 0; i &lt; m.grid.length; i++) {
+			if (x > m.width) {
+				s += '],'
+				x = 1
+				s += '['
+			}
+			s += m.grid[i].color
+			if (x &lt; m.width)
+				s += ','
+			x++
+		}
+		s += ']]'
+		var dl = document.createElement('a')
+		dl.href = 'data:text/json;charset=utf-8,' + escape(s)
+		dl.download = name + '.js'
+		dl.click()
+	}
+
+	this.visualize = function() {
+		var m = this
+		var ctx = m.canvas.getContext('2d')
+
+		if (this.hex) {
+			drawHexGrid(this)
+			return
+		}
+
+		for (var i = 0; i &lt; m.grid.length; i++) {
+			if (m.grid[i].color != null) {
+				ctx.beginPath()
+				ctx.fillStyle = m.colors[m.grid[i].color]
+				ctx.rect(m.grid[i].x * m.size, m.grid[i].y * m.size, m.size, m.size)
+				ctx.fill()
+			}
+		}
+	}
+
+	this.start = function(interval, after) {
+		var m = this
+		for (var i = 0; i &lt; m.grid.length; i++) {
+			m.grid[i].n = []
+			for (var j = 0; j &lt; m.grid.length; j++)
+				if (j != i)
+					if (Math.abs(m.grid[i].x - m.grid[j].x) &lt;= m.grid[i].vision &amp;&amp; Math.abs(m.grid[i].y - m.grid[j].y) &lt;= m.grid[i].vision)
+						m.grid[i].n.push(m.grid[j].id)
+		}
+
+		if (this.hex) {
+			for (var i = 0; i &lt; m.grid.length; i++) {
+				var used = new Array(m.grid.length)
+				for (var j = 0; j &lt; used.length; ++j) used[j] = false
+				used[i] = true
+				m.grid[i].n = getHexNeighbours(m.grid[i], m.grid[i].vision, m.grid, m)
+			}
+		}
+
+		clearInterval(m.interval)
+		m.interval = setInterval(function() {m.step(); if (after) after()}, interval)
+	}
+
+	this.stop = function() {
+		clearInterval(this.interval)
+	}
+
+	this.step = function() {
+		var m = this
+		var old_grid = cloneArray(m.grid)
+
+		var chosen = new Array(m.grid.length)
+		for (var i = 0; i &lt; m.grid.length; i++) chosen[i] = false
+
+		for (var i = 0; i &lt; m.grid.length; i++)
+			m.grid[i].moving = false
+
+		if (this.messaging) {
+			for (var i = 0; i &lt; m.grid.length; ++i)
+				for (var j = 0; j &lt; this.messages[i].length; ++j)
+					grid[i].onMessage(this.messages[i][j].sender, this.messages[i][j].content)
+		}
+
+		this.messages = new Array(grid.length)
+		for (var i = 0; i &lt; grid.length; ++i) this.messages[i] = []
+
+		for (var i = 0; i &lt; m.grid.length; i++) {
+			var n = []
+			for (var j = 0; j &lt; old_grid[i].n.length; j++)
+				n.push(old_grid[old_grid[i].n[j]])
+
+			m.grid[i].process(n)
+
+			if (this.moving) {
+				var moving = m.grid[i].move(n)
+				m.grid[i].moving = moving
+				if (moving &amp;&amp; moving.y >= 0 &amp;&amp; moving.x >= 0 &amp;&amp; moving.y &lt; this.height &amp;&amp; moving.x &lt; this.width)
+					if (m.grid[moving.y * this.width + moving.x].from.length == 0 || m.grid[i].moving.priority > m.grid[moving.y * this.width + moving.x].from[0].moving.priority) {
+						for (var j = 0; j &lt; m.grid[moving.y * this.width + moving.x].from.length; j++)
+							chosen[m.grid[moving.y * this.width + moving.x].from[j].id] = false
+						m.grid[moving.y * this.width + moving.x].from = []
+						m.grid[moving.y * this.width + moving.x].from.push(cloneObject(m.grid[i]))
+						chosen[i] = true
+					} else if (m.grid[moving.y * this.width + moving.x].from.length > 0 &amp;&amp; m.grid[i].moving.priority == m.grid[moving.y * this.width + moving.x].from[0].moving.priority) {
+						if (Math.random() > 0.5) {
+							for (var j = 0; j &lt; m.grid[moving.y * this.width + moving.x].from.length; j++)
+								chosen[m.grid[moving.y * this.width + moving.x].from[j].id] = false
+							m.grid[moving.y * this.width + moving.x].from = []
+							m.grid[moving.y * this.width + moving.x].from.push(cloneObject(m.grid[i]))
+							chosen[i] = true
+						}
+					}
+			}
+
+			if (this.messaging) {
+				var sended = grid[i].sendMessage(n)
+				if (sended)
+					for (var j = 0; j &lt; sended.length; ++j)
+						this.messages[sended[j].address].push({ sender: grid[i].id, content: sended[j].content })
+			}
+		}
+
+		if (this.moving) {
+			for (var i = 0; i &lt; m.grid.length; i++)
+				if (chosen[i])
+					m.grid[i].jump(m.grid[i].moving.instead)
+			for (var i = 0; i &lt; m.grid.length; i++)
+				if (m.grid[i].from.length > 0) {
+					var j = Math.floor(Math.random() * m.grid[i].from.length)
+					m.grid[i].jump(m.grid[i].from[j], this.constant)
+					m.grid[i].from = []
+				}
+		}
+
+		m.visualize()
+	}
+
+	for (var key in param)
+		this[key] = param[key]
+
+    this.grid = grid
+    this.canvas = canvas
+
+    if (this.messaging) {
+    	this.messages = new Array(grid.length)
+    	for (var i = 0; i &lt; grid.length; ++i) this.messages[i] = []
+    }
+}
+
+/**
+ * Copy parameters from other cell.
+ * @this cell
+ * @param {Object} type object-original
+ * @param {Array} constant properties cell can't copy
+ */
+function jump(type, constant) {
+	for(var key in type)
+		if (type[key] != null &amp;&amp; key != 'from' &amp;&amp; key != 'x' &amp;&amp; key != 'y' &amp;&amp; key != 'id' &amp;&amp; key != 'n')
+			if (!constant || constant.indexOf(key) &lt; 0)
+				if (Array.isArray(type[key]))
+					this[key] = cloneArray(type[key])
+				else
+					this[key] = cloneObject(type[key])
+}
+
+/**
+ * Deep-copy of object.
+ * @param {Object} obj object to be copied
+ * @return {Object} copy of object
+ */
+function cloneObject(obj) {
+	if (typeof obj != "object")
+		return obj
+	var ans = {}
+	for (var key in obj)
+		if (obj[key] == null || obj[key] == undefined)
+			ans[key] = obj[key]
+		else if (Array.isArray(obj[key]))
+			ans[key] = cloneArray(obj[key])
+		else if (typeof obj[key] == "object")
+			ans[key] = cloneObject(obj[key])
+		else ans[key] = obj[key]
+	return ans
+}
+
+/**
+ * Deep-copy of array.
+ * @param {Array} arr array to be copied
+ * @return {Array} copy of array
+ */
+function cloneArray(arr) {
+	var ans = []
+	for (var i = 0; i &lt; arr.length; i++)
+		if (arr[i] == null || arr[i] == undefined)
+			ans.push(arr[i])
+		else if (Array.isArray(arr[i]))
+			ans.push(cloneArray(arr[i]))
+		else if (typeof arr[i] == "object")
+			ans.push(cloneObject(arr[i]))
+		else ans.push(arr[i])
+	return ans
+}
+
+/**
+ * Array containing elements with specified parameters.
+ * @param {Array} n array to be filtered
+ * @param {(Object|Function)} params tasked parameters for each element of set
+ * @param {Object} [me] offending cell
+ * @return {Array} subarray containing elements with tasked parameters
+ */
+function set(n, params, me) {
+	var ans = []
+	for (var i = 0; i &lt; n.length; i++)
+		if (params.isFunction &amp;&amp; params(n[i], me))
+			ans.push(n[i])
+		else {
+			var flag = true
+			for (var key in params)
+				if (params[key] != n[i][key]) {
+					flag = false
+					break
+				}
+			if (flag)
+				ans.push(n[i])
+		}
+	return ans
+}
+
+/**
+ * Random element(s) from array.
+ * @this array
+ * @param {number} n amount of random elements
+ * @return {(Array|Object)} randomly selected element from array
+ */
+rand = function(n) {
+	var ans = []
+
+	if (n == 0)
+		return []
+
+	if (n > this.length)
+		return this
+
+	if (n) {
+		var IDs = new Array(this.length)
+		for (var i = 0; i &lt; IDs.length; i++)
+			IDs[i] = i
+		while (n > 0) {
+			var r = IDs[Math.floor(Math.random() * IDs.length)]
+			ans.push(this[r])
+			IDs.splice(r, 1)
+			n--
+		}
+		return ans
+	}
+
+	return this[Math.floor(Math.random() * this.length)]
+}
+
+Array.prototype.rand = rand
+
+/**
+ * Swaps two elements in array.
+ * @this array
+ * @param {number} a index of the first element
+ * @param {number} b index of the second element
+ */
+swap = function(a, b) {
+	var temp = this[a]
+	this[a] = this[b]
+	this[b] = temp
+}
+
+Array.prototype.swap = swap
+
+Function.prototype.isFunction = true
+
+// draws one hex with specified color and coordinates
+function drawHex(m, center, color) {
+	var ctx = m.canvas.getContext('2d')
+	ctx.fillStyle = color
+	ctx.lineWidth = 0
+	ctx.beginPath()
+	var firstCorner = hexCorner(center, m.size / 2, 0)
+	ctx.moveTo(firstCorner.x, firstCorner.y)
+	for (var i = 1; i &lt; 7; ++i) {
+		var corner = hexCorner(center, m.size / 2, i)
+		ctx.lineTo(corner.x, corner.y)
+	}
+	ctx.fill()
+}
+
+// returns the point of one hex corner with
+// specified distance and angle from center
+function hexCorner(center, size, i) {
+    var angle_deg = 60 * i
+    var angle_rad = Math.PI / 180 * angle_deg
+    return { x: center.x + size * Math.cos(angle_rad),
+             y: center.y + size * Math.sin(angle_rad) }
+}
+
+// fill all the machine grid with hexes
+function drawHexGrid(m) {
+	for (var i = 0; i &lt; m.grid.length; ++i) {
+		var evenColumn = m.grid[i].x % 2 == 0
+		drawHex(m, { x: m.grid[i].x * (m.size * 3 / 4) + m.size / 2, y: m.grid[i].y * (Math.sqrt(3)/2 * m.size) + evenColumn * (Math.sqrt(3)/2 * m.size) / 2 + (Math.sqrt(3)/2 * m.size) / 2 + 1 }, m.colors[m.grid[i].color])
+	}
+}
+
+// returns the array of neighbours of hexagonal cell
+function getHexNeighbours(cell, vision, grid, m) {
+	var d = [
+	   [ [+1, +1], [+1,  0], [ 0, -1],
+	     [-1,  0], [-1, +1], [ 0, +1] ],
+	   [ [+1,  0], [+1, -1], [ 0, -1],
+	     [-1, -1], [-1,  0], [ 0, +1] ]
+	]
+
+	var n = []
+
+	var h = [vision]
+	for (var i = 1; i &lt;= vision; ++i)
+		if (i &amp; 1)
+			h[i] = h[i-1]
+		else
+			h[i] = h[i-1] - 1
+
+	for (var i = 0; i &lt; grid.length; ++i) {
+		var _w = Math.abs(grid[i].x - cell.x)
+		var _h = Math.abs(grid[i].y - cell.y)
+		if ((cell.x &amp; 1) &amp;&amp; (_w &amp; 1))
+			if (grid[i].y > cell.y)
+				_h++
+		if ((!(cell.x &amp; 1)) &amp;&amp; (_w &amp; 1))
+			if (grid[i].y &lt; cell.y)
+				_h++
+		if (_h &lt;= h[_w] &amp;&amp; grid[i] != cell)
+			n.push(i)
+	}
+
+	return n
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Machine.html">Machine</a></li></ul><h3>Global</h3><ul><li><a href="global.html#cloneArray">cloneArray</a></li><li><a href="global.html#cloneObject">cloneObject</a></li><li><a href="global.html#jump">jump</a></li><li><a href="global.html#rand">rand</a></li><li><a href="global.html#set">set</a></li><li><a href="global.html#swap">swap</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.4.2</a> on Fri Oct 28 2016 19:40:48 GMT+0300 (MSK)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
